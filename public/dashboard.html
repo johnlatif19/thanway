@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>لوحة التحكم - نتائج الطلاب</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Cairo', sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+    }
+
+    .dashboard-container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 25px;
+      padding: 25px 35px;
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 15px;
+      margin-bottom: 30px;
+      animation: slideDown 0.5s ease-out;
+    }
+
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .header-title {
+      color: white;
+      font-size: 1.8rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-title span {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+
+    .student-count {
+      color: rgba(255, 255, 255, 0.9);
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.15);
+      padding: 8px 18px;
+      border-radius: 20px;
+      font-size: 0.95rem;
+    }
+
+    .btn-logout {
+      padding: 10px 25px;
+      border: none;
+      border-radius: 12px;
+      background: rgba(255, 71, 87, 0.3);
+      color: #ff6b6b;
+      font-weight: 700;
+      font-size: 0.95rem;
+      font-family: 'Cairo', sans-serif;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: 1px solid rgba(255, 71, 87, 0.3);
+    }
+
+    .btn-logout:hover {
+      background: rgba(255, 71, 87, 0.5);
+      transform: translateY(-2px);
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 25px;
+      padding: 35px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.2);
+      margin-bottom: 25px;
+      animation: fadeIn 0.5s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    .card-title {
+      color: white;
+      font-size: 1.3rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .upload-area {
+      border: 2px dashed rgba(255, 255, 255, 0.3);
+      border-radius: 15px;
+      padding: 30px;
+      text-align: center;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .upload-area:hover {
+      border-color: rgba(255, 255, 255, 0.6);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .upload-area.dragover {
+      border-color: #f5576c;
+      background: rgba(245, 87, 108, 0.1);
+    }
+
+    .upload-icon {
+      font-size: 3.5rem;
+      display: block;
+      margin-bottom: 15px;
+    }
+
+    .upload-text {
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 1.1rem;
+    }
+
+    .upload-text .highlight {
+      color: white;
+      font-weight: 700;
+    }
+
+    .file-input-wrapper {
+      margin-top: 15px;
+    }
+
+    #fileInput {
+      display: none;
+    }
+
+    .file-label {
+      display: inline-block;
+      padding: 12px 30px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-family: 'Cairo', sans-serif;
+    }
+
+    .file-label:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: translateY(-2px);
+    }
+
+    .file-name {
+      color: rgba(255, 255, 255, 0.7);
+      margin-top: 10px;
+      font-size: 0.95rem;
+    }
+
+    .btn-upload {
+      padding: 14px 40px;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: white;
+      font-weight: 700;
+      font-size: 1.05rem;
+      font-family: 'Cairo', sans-serif;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 8px 25px rgba(245, 87, 108, 0.3);
+      margin-top: 15px;
+      width: 100%;
+    }
+
+    .btn-upload:hover:not(:disabled) {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 35px rgba(245, 87, 108, 0.5);
+    }
+
+    .btn-upload:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .progress-container {
+      margin-top: 20px;
+      display: none;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 12px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #f093fb, #f5576c);
+      border-radius: 10px;
+      transition: width 0.3s ease;
+    }
+
+    .progress-text {
+      color: rgba(255, 255, 255, 0.8);
+      margin-top: 8px;
+      font-size: 0.95rem;
+      text-align: center;
+    }
+
+    .status-message {
+      margin-top: 15px;
+      padding: 12px 18px;
+      border-radius: 12px;
+      font-weight: 600;
+      display: none;
+    }
+
+    .status-success {
+      background: rgba(46, 213, 115, 0.2);
+      color: #2ed573;
+      border: 1px solid rgba(46, 213, 115, 0.3);
+    }
+
+    .status-error {
+      background: rgba(255, 107, 107, 0.2);
+      color: #ff6b6b;
+      border: 1px solid rgba(255, 107, 107, 0.3);
+    }
+
+    .status-info {
+      background: rgba(255, 165, 0, 0.2);
+      color: #ffa502;
+      border: 1px solid rgba(255, 165, 0, 0.3);
+    }
+
+    @media (max-width: 768px) {
+      .header {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: center;
+        padding: 20px;
+      }
+
+      .header-actions {
+        justify-content: center;
+      }
+
+      .card {
+        padding: 20px;
+      }
+
+      .upload-area {
+        padding: 20px;
+      }
+
+      .btn-upload {
+        padding: 12px;
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard-container">
+    <div class="header">
+      <div class="header-title">
+        📊 <span>لوحة التحكم</span>
+      </div>
+      <div class="header-actions">
+        <span class="student-count" id="studentCount">👥 0 طالب</span>
+        <button class="btn-logout" id="logoutBtn">🚪 تسجيل الخروج</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📤 رفع ملف Excel</div>
+      
+      <div class="upload-area" id="uploadArea">
+        <span class="upload-icon">📁</span>
+        <div class="upload-text">
+          <span class="highlight">اسحب الملف هنا</span> أو اضغط للاختيار
+        </div>
+        <div class="file-input-wrapper">
+          <label class="file-label" id="fileLabel">📎 اختيار ملف</label>
+          <input type="file" id="fileInput" accept=".xlsx,.xls">
+        </div>
+        <div class="file-name" id="fileName">لم يتم اختيار ملف</div>
+      </div>
+
+      <button class="btn-upload" id="uploadBtn" disabled>🚀 رفع الملف</button>
+
+      <div class="progress-container" id="progressContainer">
+        <div class="progress-bar-bg">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="progress-text" id="progressText">جاري الرفع...</div>
+      </div>
+
+      <div class="status-message" id="statusMessage"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📋 تعليمات</div>
+      <ul style="color: rgba(255,255,255,0.8); line-height: 2; padding-right: 20px;">
+        <li>📌 رفع ملف Excel بامتداد <strong>.xlsx</strong> أو <strong>.xls</strong></li>
+        <li>📌 يجب أن يحتوي الملف على عمود <strong>رقم الجلوس</strong> أو <strong>seat_number</strong></li>
+        <li>📌 سيتم تحديث بيانات الطلاب تلقائياً في حالة وجود رقم جلوس مكرر</li>
+        <li>📌 جميع المواد تُقرأ تلقائياً من الأعمدة</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    // Check authentication
+    async function checkAuth() {
+      try {
+        const response = await fetch('/api/check-auth');
+        const data = await response.json();
+        if (!data.authenticated) {
+          window.location.href = '/login.html';
+        }
+      } catch (error) {
+        console.error('Auth check error:', error);
+        window.location.href = '/login.html';
+      }
+    }
+    checkAuth();
+
+    // Load student count
+    async function loadCount() {
+      try {
+        const response = await fetch('/api/count');
+        if (response.ok) {
+          const data = await response.json();
+          document.getElementById('studentCount').textContent = `👥 ${data.count || 0} طالب`;
+        }
+      } catch (error) {
+        console.error('Count error:', error);
+      }
+    }
+    loadCount();
+
+    // Logout
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/login.html';
+      } catch (error) {
+        console.error('Logout error:', error);
+      }
+    });
+
+    // File upload
+    const fileInput = document.getElementById('fileInput');
+    const fileName = document.getElementById('fileName');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const statusMessage = document.getElementById('statusMessage');
+    const uploadArea = document.getElementById('uploadArea');
+
+    let selectedFile = null;
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        selectedFile = file;
+        fileName.textContent = `📎 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        uploadBtn.disabled = false;
+        hideStatus();
+      } else {
+        selectedFile = null;
+        fileName.textContent = 'لم يتم اختيار ملف';
+        uploadBtn.disabled = true;
+      }
+    });
+
+    uploadArea.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        const file = files[0];
+        if (file.name.match(/\.(xlsx|xls)$/)) {
+          fileInput.files = files;
+          const event = new Event('change');
+          fileInput.dispatchEvent(event);
+        } else {
+          showStatus('الرجاء اختيار ملف Excel فقط', 'error');
+        }
+      }
+    });
+
+    uploadBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      progressContainer.style.display = 'block';
+      progressBar.style.width = '0%';
+      progressText.textContent = 'جاري الرفع... 0%';
+      uploadBtn.disabled = true;
+      hideStatus();
+
+      try {
+        // Simulate progress
+        let progress = 0;
+        const progressInterval = setInterval(() => {
+          if (progress < 90) {
+            progress += Math.random() * 10;
+            progress = Math.min(progress, 90);
+            progressBar.style.width = progress + '%';
+            progressText.textContent = `جاري الرفع... ${Math.round(progress)}%`;
+          }
+        }, 300);
+
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        clearInterval(progressInterval);
+
+        const data = await response.json();
+
+        if (response.ok) {
+          progressBar.style.width = '100%';
+          progressText.textContent = '✅ تم الرفع بنجاح!';
+          showStatus(`✅ تم رفع البيانات بنجاح! (${data.count || 0} طالب)`, 'success');
+          loadCount();
+          selectedFile = null;
+          fileInput.value = '';
+          fileName.textContent = 'لم يتم اختيار ملف';
+        } else {
+          progressBar.style.width = '100%';
+          progressText.textContent = '❌ فشل الرفع';
+          showStatus(data.error || 'حدث خطأ أثناء رفع الملف', 'error');
+        }
+      } catch (error) {
+        console.error('Upload error:', error);
+        progressBar.style.width = '100%';
+        progressText.textContent = '❌ فشل الرفع';
+        showStatus('حدث خطأ في الاتصال. الرجاء المحاولة مرة أخرى.', 'error');
+      } finally {
+        uploadBtn.disabled = false;
+        setTimeout(() => {
+          progressContainer.style.display = 'none';
+          progressBar.style.width = '0%';
+        }, 4000);
+      }
+    });
+
+    function showStatus(message, type) {
+      statusMessage.textContent = message;
+      statusMessage.className = 'status-message status-' + type;
+      statusMessage.style.display = 'block';
+    }
+
+    function hideStatus() {
+      statusMessage.style.display = 'none';
+    }
+  </script>
+</body>
+</html>
