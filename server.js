@@ -6,6 +6,7 @@ const XLSX = require('xlsx');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const path = require('path');
+const csv = require('csv-parser');
 const { Readable } = require('stream');
 require('dotenv').config();
 
@@ -17,7 +18,6 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
-// CORS
 app.use(cors({
   origin: '*',
   credentials: true,
@@ -44,7 +44,7 @@ try {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { 
-    fileSize: 5 * 1024 * 1024 // 5MB limit for Vercel
+    fileSize: 5 * 1024 * 1024 // 5MB limit
   }
 });
 
@@ -160,7 +160,35 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// Upload Excel file - مع دعم الملفات الكبيرة
+// ==================== READ CSV FILE ====================
+function parseCSV(buffer) {
+  return new Promise((resolve, reject) => {
+    const results = [];
+    const csvContent = buffer.toString('utf-8');
+    
+    // Simple CSV parsing
+    const lines = csvContent.split('\n').filter(line => line.trim());
+    if (lines.length === 0) {
+      return resolve([]);
+    }
+    
+    // Get headers from first line
+    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+    
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+      const row = {};
+      headers.forEach((h, idx) => {
+        row[h] = values[idx] || '';
+      });
+      results.push(row);
+    }
+    
+    resolve(results);
+  });
+}
+
+// ==================== UPLOAD ENDPOINT ====================
 app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
   console.log('📤 Upload attempt');
   
@@ -172,39 +200,50 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
 
     console.log('📊 File size:', req.file.size, 'bytes');
     console.log('📊 File name:', req.file.originalname);
+    console.log('📊 File type:', req.file.mimetype);
 
-    // If file is too large for Vercel, return error with instructions
+    // Check file size
     if (req.file.size > 4.5 * 1024 * 1024) {
       return res.status(413).json({ 
         error: 'FILE_TOO_LARGE',
-        message: 'الملف كبير جداً. الحد الأقصى هو 4.5 ميجابايت على Vercel. الرجاء استخدام ملف أصغر أو تقسيم البيانات.',
-        maxSize: '4.5 MB',
+        message: 'الملف كبير جداً. الحد الأقصى هو 4.5 ميجابايت',
         currentSize: (req.file.size / 1024 / 1024).toFixed(2) + ' MB'
       });
     }
 
-    // Try to read the file
-    let workbook;
-    try {
-      workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    } catch (error) {
-      console.error('❌ Error reading Excel:', error);
-      return res.status(400).json({ error: 'Invalid Excel file format' });
-    }
+    let data = [];
+    const fileName = req.file.originalname.toLowerCase();
+    const fileBuffer = req.file.buffer;
 
-    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
-      return res.status(400).json({ error: 'Excel file has no sheets' });
+    // Try to parse as CSV first
+    if (fileName.endsWith('.csv') || req.file.mimetype === 'text/csv' || req.file.mimetype === 'application/csv') {
+      try {
+        data = await parseCSV(fileBuffer);
+        console.log(`📊 Parsed ${data.length} rows from CSV`);
+      } catch (error) {
+        console.error('❌ Error parsing CSV:', error);
+        return res.status(400).json({ error: 'Invalid CSV file format' });
+      }
+    } else {
+      // Try to parse as Excel
+      try {
+        const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+          return res.status(400).json({ error: 'File has no sheets' });
+        }
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        data = XLSX.utils.sheet_to_json(worksheet);
+        console.log(`📊 Parsed ${data.length} rows from Excel`);
+      } catch (error) {
+        console.error('❌ Error reading file:', error);
+        return res.status(400).json({ error: 'Invalid file format. Please upload Excel (.xlsx, .xls) or CSV file.' });
+      }
     }
-
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet);
 
     if (!data || data.length === 0) {
       return res.status(400).json({ error: 'File is empty or invalid' });
     }
-
-    console.log(`📊 Processing ${data.length} rows`);
 
     if (!db) {
       console.error('❌ Firebase not initialized');
@@ -216,21 +255,26 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
     let batchCount = 0;
 
     for (const row of data) {
+      // Try different field names for seat number
       const seatNumber = String(
         row['seat_number'] || 
         row['رقم الجلوس'] || 
         row['Seat Number'] || 
         row['SeatNumber'] || 
+        row['Seat_Number'] ||
         ''
       );
       
-      if (!seatNumber) continue;
+      if (!seatNumber) {
+        console.log('⚠️ Skipping row without seat number:', row);
+        continue;
+      }
 
       const docRef = db.collection('results').doc(seatNumber);
       
       const studentData = {
         seat_number: seatNumber,
-        student_name: String(row['student_name'] || row['اسم الطالب'] || row['Student Name'] || row['StudentName'] || ''),
+        student_name: String(row['student_name'] || row['اسم الطالب'] || row['Student Name'] || row['StudentName'] || row['Student_Name'] || ''),
         arabic: parseFloat(row['arabic'] || row['عربي'] || row['لغة عربية'] || 0) || 0,
         english: parseFloat(row['english'] || row['انجليزي'] || row['لغة انجليزية'] || 0) || 0,
         second_language: parseFloat(row['second_language'] || row['لغة ثانية'] || row['لغة أجنبية'] || 0) || 0,
