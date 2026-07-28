@@ -6,8 +6,6 @@ const XLSX = require('xlsx');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const path = require('path');
-const csv = require('csv-parser');
-const { Readable } = require('stream');
 require('dotenv').config();
 
 const app = express();
@@ -160,32 +158,51 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// ==================== READ CSV FILE ====================
+// ==================== READ CSV FILE (بدون مكتبة خارجية) ====================
 function parseCSV(buffer) {
-  return new Promise((resolve, reject) => {
-    const results = [];
-    const csvContent = buffer.toString('utf-8');
+  const results = [];
+  const csvContent = buffer.toString('utf-8');
+  
+  // Split into lines and remove empty lines
+  const lines = csvContent.split('\n').filter(line => line.trim());
+  if (lines.length === 0) {
+    return results;
+  }
+  
+  // Get headers from first line
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  
+  // Parse each row
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
     
-    // Simple CSV parsing
-    const lines = csvContent.split('\n').filter(line => line.trim());
-    if (lines.length === 0) {
-      return resolve([]);
+    // Handle quoted values
+    const values = [];
+    let currentValue = '';
+    let insideQuotes = false;
+    
+    for (let j = 0; j < line.length; j++) {
+      const char = line[j];
+      if (char === '"') {
+        insideQuotes = !insideQuotes;
+      } else if (char === ',' && !insideQuotes) {
+        values.push(currentValue.trim());
+        currentValue = '';
+      } else {
+        currentValue += char;
+      }
     }
+    values.push(currentValue.trim());
     
-    // Get headers from first line
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-    
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-      const row = {};
-      headers.forEach((h, idx) => {
-        row[h] = values[idx] || '';
-      });
-      results.push(row);
-    }
-    
-    resolve(results);
-  });
+    const row = {};
+    headers.forEach((h, idx) => {
+      row[h] = values[idx] || '';
+    });
+    results.push(row);
+  }
+  
+  return results;
 }
 
 // ==================== UPLOAD ENDPOINT ====================
@@ -218,7 +235,7 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
     // Try to parse as CSV first
     if (fileName.endsWith('.csv') || req.file.mimetype === 'text/csv' || req.file.mimetype === 'application/csv') {
       try {
-        data = await parseCSV(fileBuffer);
+        data = parseCSV(fileBuffer);
         console.log(`📊 Parsed ${data.length} rows from CSV`);
       } catch (error) {
         console.error('❌ Error parsing CSV:', error);
