@@ -1,7 +1,6 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const cookieParser = require('cookie-parser');
@@ -12,34 +11,49 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(express.json());
+// ==================== MIDDLEWARE ====================
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
+
+// CORS - Allow all in development
 app.use(cors({
-  origin: true,
-  credentials: true
+  origin: '*', // Allow all origins temporarily
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept']
 }));
+
 app.use(express.static('public'));
 
-// Initialize Firebase Admin
-const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
-admin.initializeApp({
-  credential: admin.credential.cert(firebaseConfig)
-});
-const db = admin.firestore();
+// ==================== FIREBASE ====================
+let db;
+try {
+  const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
+  admin.initializeApp({
+    credential: admin.credential.cert(firebaseConfig)
+  });
+  db = admin.firestore();
+  console.log('Firebase initialized successfully');
+} catch (error) {
+  console.error('Firebase initialization error:', error);
+}
 
-// Multer setup for file upload
+// ==================== MULTER ====================
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: 50 * 1024 * 1024 }
 });
 
-// JWT Verification Middleware
+// ==================== JWT MIDDLEWARE ====================
 const verifyJWT = (req, res, next) => {
-  const token = req.cookies.token;
+  // Try to get token from cookie first, then from header
+  const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
+  
   if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: 'Unauthorized - No token' });
   }
+  
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
@@ -50,12 +64,11 @@ const verifyJWT = (req, res, next) => {
 };
 
 // ==================== HTML ROUTES ====================
-// Serve HTML pages directly
 app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.get('/dashboard', (req, res) => {
+app.get('/dashboard', verifyJWT, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
@@ -64,50 +77,59 @@ app.get('/', (req, res) => {
 });
 
 // ==================== API ROUTES ====================
+
+// Test endpoint - to check if server is working
+app.get('/api/test', (req, res) => {
+  res.json({ status: 'Server is working!' });
+});
+
 // Login endpoint
 app.post('/api/login', async (req, res) => {
+  console.log('Login attempt received');
   try {
     const { username, password } = req.body;
+    console.log('Username:', username);
     
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
     
-    const adminUsername = process.env.ADMIN_USERNAME;
-    const adminPassword = process.env.ADMIN_PASSWORD;
+    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
     
     if (username === adminUsername && password === adminPassword) {
       const token = jwt.sign(
         { username, role: 'admin' },
-        process.env.JWT_SECRET,
+        process.env.JWT_SECRET || 'mysecretkey',
         { expiresIn: '24h' }
       );
       
-      res.cookie('token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+      // Send token in response (no cookies for simplicity)
+      return res.json({ 
+        success: true, 
+        message: 'Login successful',
+        token: token,
+        username: username
       });
-      
-      return res.json({ success: true, message: 'Login successful' });
     } else {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
   } catch (error) {
     console.error('Login error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
 // Check authentication
 app.get('/api/check-auth', (req, res) => {
   try {
-    const token = req.cookies.token;
+    const token = req.headers.authorization?.split(' ')[1];
+    
     if (!token) {
       return res.json({ authenticated: false });
     }
-    jwt.verify(token, process.env.JWT_SECRET);
+    
+    jwt.verify(token, process.env.JWT_SECRET || 'mysecretkey');
     return res.json({ authenticated: true });
   } catch (error) {
     return res.json({ authenticated: false });
@@ -116,20 +138,18 @@ app.get('/api/check-auth', (req, res) => {
 
 // Logout endpoint
 app.post('/api/logout', (req, res) => {
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax'
-  });
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// Upload Excel file (FIXED BATCH COMMIT)
+// Upload Excel file
 app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
+  console.log('Upload attempt received');
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
+
+    console.log('File received:', req.file.originalname, 'Size:', req.file.size);
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
@@ -140,18 +160,18 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'File is empty or invalid' });
     }
 
+    console.log('Processing', data.length, 'rows');
+
     let processedCount = 0;
     let batch = db.batch();
     let batchCount = 0;
 
     for (const row of data) {
-      // Check if row has seat_number
       const seatNumber = String(row['seat_number'] || row['رقم الجلوس'] || '');
       if (!seatNumber) continue;
 
       const docRef = db.collection('results').doc(seatNumber);
       
-      // Build student data object
       const studentData = {
         seat_number: seatNumber,
         student_name: String(row['student_name'] || row['اسم الطالب'] || ''),
@@ -178,15 +198,13 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
       processedCount++;
       batchCount++;
       
-      // Commit in batches of 500
       if (batchCount >= 500) {
         await batch.commit();
-        batch = db.batch(); // Create new batch
+        batch = db.batch();
         batchCount = 0;
       }
     }
 
-    // Commit remaining operations
     if (batchCount > 0) {
       await batch.commit();
     }
@@ -212,13 +230,10 @@ app.get('/api/search', async (req, res) => {
       return res.json([]);
     }
 
-    // Check if query is numeric (seat number)
     const isNumeric = /^\d+$/.test(q.trim());
-    
     let results = [];
     
     if (isNumeric) {
-      // Search by seat number (exact match)
       const docRef = db.collection('results').doc(q.trim());
       const doc = await docRef.get();
       
@@ -226,9 +241,7 @@ app.get('/api/search', async (req, res) => {
         results = [doc.data()];
       }
     } else {
-      // Search by student name (case-insensitive, partial match)
       const snapshot = await db.collection('results').get();
-      
       const searchTerm = q.trim().toLowerCase();
       const matchedDocs = [];
       
@@ -262,13 +275,12 @@ app.get('/api/count', verifyJWT, async (req, res) => {
   }
 });
 
-// ==================== CATCH-ALL ROUTE ====================
-// This must be the LAST route - handles all other requests
+// ==================== CATCH-ALL ====================
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start server
+// ==================== START ====================
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
