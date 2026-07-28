@@ -8,6 +8,14 @@
   ],
   "routes": [
     {
+      "src": "/login",
+      "dest": "/public/login.html"
+    },
+    {
+      "src": "/dashboard",
+      "dest": "/public/dashboard.html"
+    },
+    {
       "src": "/api/(.*)",
       "dest": "/server.js"
     },
