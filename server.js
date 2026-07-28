@@ -49,6 +49,21 @@ const verifyJWT = (req, res, next) => {
   }
 };
 
+// ==================== HTML ROUTES ====================
+// Serve HTML pages directly
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.get('/dashboard', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ==================== API ROUTES ====================
 // Login endpoint
 app.post('/api/login', async (req, res) => {
   try {
@@ -109,7 +124,7 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// Upload Excel file
+// Upload Excel file (FIXED BATCH COMMIT)
 app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -125,17 +140,9 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'File is empty or invalid' });
     }
 
-    // Expected headers
-    const headers = [
-      'seat_number', 'student_name', 'arabic', 'english', 'second_language',
-      'physics', 'chemistry', 'biology', 'geology', 'math', 'statistics',
-      'history', 'geography', 'philosophy', 'religion', 'national',
-      'total', 'percentage', 'status'
-    ];
-
-    const results = [];
-    const batch = db.batch();
     let processedCount = 0;
+    let batch = db.batch();
+    let batchCount = 0;
 
     for (const row of data) {
       // Check if row has seat_number
@@ -169,18 +176,20 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
 
       batch.set(docRef, studentData, { merge: true });
       processedCount++;
+      batchCount++;
       
       // Commit in batches of 500
-      if (processedCount % 500 === 0) {
+      if (batchCount >= 500) {
         await batch.commit();
-        // Create new batch for remaining
-        // Note: In Firestore, we need to create a new batch after commit
-        // We'll handle this by committing at the end with remaining items
+        batch = db.batch(); // Create new batch
+        batchCount = 0;
       }
     }
 
     // Commit remaining operations
-    await batch.commit();
+    if (batchCount > 0) {
+      await batch.commit();
+    }
 
     return res.json({ 
       success: true, 
@@ -253,8 +262,9 @@ app.get('/api/count', verifyJWT, async (req, res) => {
   }
 });
 
-// Serve index.html for all routes (SPA-like)
-app.get('/', (req, res) => {
+// ==================== CATCH-ALL ROUTE ====================
+// This must be the LAST route - handles all other requests
+app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
