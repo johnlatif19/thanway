@@ -17,6 +17,11 @@
       min-height: 100vh;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       padding: 20px;
+      display: none;
+    }
+
+    body.show {
+      display: block;
     }
 
     .dashboard-container {
@@ -360,46 +365,95 @@
   </div>
 
   <script>
-    // Check authentication
+    // ============ CHECK AUTHENTICATION ============
     async function checkAuth() {
+      // Get token from URL or localStorage
+      const urlParams = new URLSearchParams(window.location.search);
+      let token = urlParams.get('token');
+      
+      if (!token) {
+        token = localStorage.getItem('token');
+      }
+      
+      if (!token) {
+        // No token, redirect to login
+        console.log('❌ No token found, redirecting to login');
+        window.location.href = '/login';
+        return;
+      }
+      
       try {
-        const response = await fetch('/api/check-auth');
+        const response = await fetch('/api/check-auth', {
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        });
+        
         const data = await response.json();
-        if (!data.authenticated) {
-          window.location.href = '/login.html';
+        
+        if (data.authenticated) {
+          // Valid token, show dashboard
+          console.log('✅ Authenticated successfully');
+          document.body.classList.add('show');
+          
+          // Remove token from URL if present
+          if (urlParams.has('token')) {
+            window.history.replaceState({}, document.title, '/dashboard');
+          }
+          
+          // Load student count
+          loadCount();
+        } else {
+          // Invalid token, redirect to login
+          console.log('❌ Invalid token, redirecting to login');
+          localStorage.removeItem('token');
+          window.location.href = '/login';
         }
       } catch (error) {
-        console.error('Auth check error:', error);
-        window.location.href = '/login.html';
+        console.error('❌ Auth check error:', error);
+        window.location.href = '/login';
       }
     }
-    checkAuth();
 
-    // Load student count
+    // ============ LOAD STUDENT COUNT ============
     async function loadCount() {
       try {
-        const response = await fetch('/api/count');
+        const token = localStorage.getItem('token');
+        const response = await fetch('/api/count', {
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        });
+        
         if (response.ok) {
           const data = await response.json();
           document.getElementById('studentCount').textContent = `👥 ${data.count || 0} طالب`;
         }
       } catch (error) {
-        console.error('Count error:', error);
+        console.error('❌ Count error:', error);
       }
     }
-    loadCount();
 
-    // Logout
+    // ============ LOGOUT ============
     document.getElementById('logoutBtn').addEventListener('click', async () => {
       try {
-        await fetch('/api/logout', { method: 'POST' });
-        window.location.href = '/login.html';
+        const token = localStorage.getItem('token');
+        await fetch('/api/logout', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        });
+        localStorage.removeItem('token');
+        window.location.href = '/login';
       } catch (error) {
-        console.error('Logout error:', error);
+        console.error('❌ Logout error:', error);
+        localStorage.removeItem('token');
+        window.location.href = '/login';
       }
     });
 
-    // File upload
+    // ============ FILE UPLOAD ============
     const fileInput = document.getElementById('fileInput');
     const fileName = document.getElementById('fileName');
     const uploadBtn = document.getElementById('uploadBtn');
@@ -478,8 +532,12 @@
           }
         }, 300);
 
+        const token = localStorage.getItem('token');
         const response = await fetch('/api/upload', {
           method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + token
+          },
           body: formData
         });
 
@@ -495,13 +553,14 @@
           selectedFile = null;
           fileInput.value = '';
           fileName.textContent = 'لم يتم اختيار ملف';
+          uploadBtn.disabled = true;
         } else {
           progressBar.style.width = '100%';
           progressText.textContent = '❌ فشل الرفع';
           showStatus(data.error || 'حدث خطأ أثناء رفع الملف', 'error');
         }
       } catch (error) {
-        console.error('Upload error:', error);
+        console.error('❌ Upload error:', error);
         progressBar.style.width = '100%';
         progressText.textContent = '❌ فشل الرفع';
         showStatus('حدث خطأ في الاتصال. الرجاء المحاولة مرة أخرى.', 'error');
@@ -523,6 +582,10 @@
     function hideStatus() {
       statusMessage.style.display = 'none';
     }
+
+    // ============ START ============
+    // Check authentication on page load
+    checkAuth();
   </script>
 </body>
 </html>
