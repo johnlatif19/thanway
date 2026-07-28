@@ -12,11 +12,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ==================== MIDDLEWARE ====================
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 app.use(cookieParser());
 
-// CORS
+// CORS - Allow all
 app.use(cors({
   origin: '*',
   credentials: true,
@@ -42,12 +42,17 @@ try {
 // ==================== MULTER ====================
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }
+  limits: { 
+    fileSize: 100 * 1024 * 1024 // 100MB limit
+  }
 });
 
 // ==================== JWT MIDDLEWARE ====================
 const verifyJWT = (req, res, next) => {
-  const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
+  // Try multiple sources for token
+  const token = req.cookies?.token || 
+                req.headers.authorization?.split(' ')[1] ||
+                req.query.token;
   
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized - No token' });
@@ -67,22 +72,18 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-// Dashboard with JWT verification - IMPORTANT
 app.get('/dashboard', (req, res) => {
-  // Check for token in query params or headers
-  const token = req.query.token || req.headers.authorization?.split(' ')[1];
+  const token = req.query.token || req.cookies?.token;
   
   if (token) {
     try {
       jwt.verify(token, process.env.JWT_SECRET || 'mysecretkey');
-      // If valid, serve dashboard
       return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
     } catch (error) {
       console.log('Invalid token for dashboard');
     }
   }
   
-  // If no valid token, redirect to login
   res.redirect('/login');
 });
 
@@ -117,7 +118,6 @@ app.post('/api/login', async (req, res) => {
         { expiresIn: '24h' }
       );
       
-      // Set cookie
       res.cookie('token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -143,7 +143,9 @@ app.post('/api/login', async (req, res) => {
 // Check authentication
 app.get('/api/check-auth', (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1] || req.cookies?.token;
+    const token = req.headers.authorization?.split(' ')[1] || 
+                  req.cookies?.token || 
+                  req.query.token;
     
     if (!token) {
       return res.json({ authenticated: false });
@@ -162,15 +164,33 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// Upload Excel file
+// Upload Excel file - IMPROVED
 app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
   console.log('📤 Upload attempt');
+  console.log('📄 File:', req.file);
+  
   try {
     if (!req.file) {
+      console.log('❌ No file received');
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    console.log('📊 File size:', req.file.size, 'bytes');
+    console.log('📊 File name:', req.file.originalname);
+
+    // Try to read the file
+    let workbook;
+    try {
+      workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    } catch (error) {
+      console.error('❌ Error reading Excel:', error);
+      return res.status(400).json({ error: 'Invalid Excel file format' });
+    }
+
+    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+      return res.status(400).json({ error: 'Excel file has no sheets' });
+    }
+
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json(worksheet);
@@ -181,19 +201,36 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
 
     console.log(`📊 Processing ${data.length} rows`);
 
+    // Check if db is initialized
+    if (!db) {
+      console.error('❌ Firebase not initialized');
+      return res.status(500).json({ error: 'Database not initialized' });
+    }
+
     let processedCount = 0;
     let batch = db.batch();
     let batchCount = 0;
 
     for (const row of data) {
-      const seatNumber = String(row['seat_number'] || row['رقم الجلوس'] || '');
-      if (!seatNumber) continue;
+      // Try different field names for seat number
+      const seatNumber = String(
+        row['seat_number'] || 
+        row['رقم الجلوس'] || 
+        row['Seat Number'] || 
+        row['SeatNumber'] || 
+        ''
+      );
+      
+      if (!seatNumber) {
+        console.log('⚠️ Skipping row without seat number:', row);
+        continue;
+      }
 
       const docRef = db.collection('results').doc(seatNumber);
       
       const studentData = {
         seat_number: seatNumber,
-        student_name: String(row['student_name'] || row['اسم الطالب'] || ''),
+        student_name: String(row['student_name'] || row['اسم الطالب'] || row['Student Name'] || row['StudentName'] || ''),
         arabic: parseFloat(row['arabic'] || row['عربي'] || row['لغة عربية'] || 0) || 0,
         english: parseFloat(row['english'] || row['انجليزي'] || row['لغة انجليزية'] || 0) || 0,
         second_language: parseFloat(row['second_language'] || row['لغة ثانية'] || row['لغة أجنبية'] || 0) || 0,
@@ -221,12 +258,15 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
         await batch.commit();
         batch = db.batch();
         batchCount = 0;
+        console.log(`📊 Committed ${processedCount} records`);
       }
     }
 
     if (batchCount > 0) {
       await batch.commit();
     }
+
+    console.log(`✅ Successfully processed ${processedCount} students`);
 
     return res.json({ 
       success: true, 
@@ -236,7 +276,10 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
 
   } catch (error) {
     console.error('❌ Upload error:', error);
-    return res.status(500).json({ error: 'Failed to process file: ' + error.message });
+    console.error('❌ Error stack:', error.stack);
+    return res.status(500).json({ 
+      error: 'Failed to process file: ' + error.message 
+    });
   }
 });
 
