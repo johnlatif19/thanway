@@ -453,23 +453,51 @@
       }
     });
 
-    // ============ FILE UPLOAD ============
+    // ============ SHOW/HIDE STATUS ============
+    function showStatus(message, type) {
+      const statusMessage = document.getElementById('statusMessage');
+      statusMessage.textContent = message;
+      statusMessage.className = 'status-message status-' + type;
+      statusMessage.style.display = 'block';
+    }
+
+    function hideStatus() {
+      const statusMessage = document.getElementById('statusMessage');
+      statusMessage.style.display = 'none';
+    }
+
+    // ============ FILE UPLOAD - IMPROVED ============
     const fileInput = document.getElementById('fileInput');
     const fileName = document.getElementById('fileName');
     const uploadBtn = document.getElementById('uploadBtn');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
-    const statusMessage = document.getElementById('statusMessage');
     const uploadArea = document.getElementById('uploadArea');
 
     let selectedFile = null;
 
+    // File input change handler
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (file) {
+        // Check file type
+        const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
+        if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/)) {
+          showStatus('⚠️ الرجاء اختيار ملف Excel فقط (.xlsx أو .xls)', 'error');
+          fileInput.value = '';
+          return;
+        }
+        
+        // Check file size (max 50MB)
+        if (file.size > 50 * 1024 * 1024) {
+          showStatus('⚠️ حجم الملف كبير جداً. الحد الأقصى 50MB', 'error');
+          fileInput.value = '';
+          return;
+        }
+        
         selectedFile = file;
-        fileName.textContent = `📎 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        fileName.textContent = `📎 ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
         uploadBtn.disabled = false;
         hideStatus();
       } else {
@@ -479,10 +507,12 @@
       }
     });
 
+    // Upload area click
     uploadArea.addEventListener('click', () => {
       fileInput.click();
     });
 
+    // Drag and drop events
     uploadArea.addEventListener('dragover', (e) => {
       e.preventDefault();
       uploadArea.classList.add('dragover');
@@ -503,11 +533,12 @@
           const event = new Event('change');
           fileInput.dispatchEvent(event);
         } else {
-          showStatus('الرجاء اختيار ملف Excel فقط', 'error');
+          showStatus('⚠️ الرجاء اختيار ملف Excel فقط (.xlsx أو .xls)', 'error');
         }
       }
     });
 
+    // Upload button click
     uploadBtn.addEventListener('click', async () => {
       if (!selectedFile) return;
 
@@ -533,6 +564,10 @@
         }, 300);
 
         const token = localStorage.getItem('token');
+        console.log('📤 Uploading file:', selectedFile.name);
+        console.log('📤 File size:', selectedFile.size);
+        console.log('📤 Token:', token ? token.substring(0, 20) + '...' : 'No token');
+
         const response = await fetch('/api/upload', {
           method: 'POST',
           headers: {
@@ -543,9 +578,21 @@
 
         clearInterval(progressInterval);
 
-        const data = await response.json();
+        console.log('📥 Response status:', response.status);
+        
+        // Get response as text first
+        const responseText = await response.text();
+        console.log('📥 Response text:', responseText);
+        
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch (e) {
+          console.error('❌ Failed to parse response:', e);
+          throw new Error('Invalid response from server');
+        }
 
-        if (response.ok) {
+        if (response.ok && data.success) {
           progressBar.style.width = '100%';
           progressText.textContent = '✅ تم الرفع بنجاح!';
           showStatus(`✅ تم رفع البيانات بنجاح! (${data.count || 0} طالب)`, 'success');
@@ -563,25 +610,15 @@
         console.error('❌ Upload error:', error);
         progressBar.style.width = '100%';
         progressText.textContent = '❌ فشل الرفع';
-        showStatus('حدث خطأ في الاتصال. الرجاء المحاولة مرة أخرى.', 'error');
+        showStatus('❌ حدث خطأ في الاتصال: ' + error.message, 'error');
       } finally {
         uploadBtn.disabled = false;
         setTimeout(() => {
           progressContainer.style.display = 'none';
           progressBar.style.width = '0%';
-        }, 4000);
+        }, 5000);
       }
     });
-
-    function showStatus(message, type) {
-      statusMessage.textContent = message;
-      statusMessage.className = 'status-message status-' + type;
-      statusMessage.style.display = 'block';
-    }
-
-    function hideStatus() {
-      statusMessage.style.display = 'none';
-    }
 
     // ============ START ============
     // Check authentication on page load
