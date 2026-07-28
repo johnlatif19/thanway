@@ -16,9 +16,9 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
-// CORS - Allow all in development
+// CORS
 app.use(cors({
-  origin: '*', // Allow all origins temporarily
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'Accept']
@@ -34,9 +34,9 @@ try {
     credential: admin.credential.cert(firebaseConfig)
   });
   db = admin.firestore();
-  console.log('Firebase initialized successfully');
+  console.log('✅ Firebase initialized');
 } catch (error) {
-  console.error('Firebase initialization error:', error);
+  console.error('❌ Firebase error:', error);
 }
 
 // ==================== MULTER ====================
@@ -47,7 +47,6 @@ const upload = multer({
 
 // ==================== JWT MIDDLEWARE ====================
 const verifyJWT = (req, res, next) => {
-  // Try to get token from cookie first, then from header
   const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
   
   if (!token) {
@@ -55,7 +54,7 @@ const verifyJWT = (req, res, next) => {
   }
   
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'mysecretkey');
     req.user = decoded;
     next();
   } catch (error) {
@@ -68,8 +67,23 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.get('/dashboard', verifyJWT, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+// Dashboard with JWT verification - IMPORTANT
+app.get('/dashboard', (req, res) => {
+  // Check for token in query params or headers
+  const token = req.query.token || req.headers.authorization?.split(' ')[1];
+  
+  if (token) {
+    try {
+      jwt.verify(token, process.env.JWT_SECRET || 'mysecretkey');
+      // If valid, serve dashboard
+      return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+    } catch (error) {
+      console.log('Invalid token for dashboard');
+    }
+  }
+  
+  // If no valid token, redirect to login
+  res.redirect('/login');
 });
 
 app.get('/', (req, res) => {
@@ -78,17 +92,16 @@ app.get('/', (req, res) => {
 
 // ==================== API ROUTES ====================
 
-// Test endpoint - to check if server is working
+// Test endpoint
 app.get('/api/test', (req, res) => {
   res.json({ status: 'Server is working!' });
 });
 
 // Login endpoint
 app.post('/api/login', async (req, res) => {
-  console.log('Login attempt received');
+  console.log('📤 Login attempt:', req.body.username);
   try {
     const { username, password } = req.body;
-    console.log('Username:', username);
     
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
@@ -104,7 +117,14 @@ app.post('/api/login', async (req, res) => {
         { expiresIn: '24h' }
       );
       
-      // Send token in response (no cookies for simplicity)
+      // Set cookie
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000
+      });
+      
       return res.json({ 
         success: true, 
         message: 'Login successful',
@@ -115,15 +135,15 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
   } catch (error) {
-    console.error('Login error:', error);
-    return res.status(500).json({ error: 'Internal server error: ' + error.message });
+    console.error('❌ Login error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Check authentication
 app.get('/api/check-auth', (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const token = req.headers.authorization?.split(' ')[1] || req.cookies?.token;
     
     if (!token) {
       return res.json({ authenticated: false });
@@ -136,20 +156,19 @@ app.get('/api/check-auth', (req, res) => {
   }
 });
 
-// Logout endpoint
+// Logout
 app.post('/api/logout', (req, res) => {
+  res.clearCookie('token');
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
 // Upload Excel file
 app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
-  console.log('Upload attempt received');
+  console.log('📤 Upload attempt');
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-
-    console.log('File received:', req.file.originalname, 'Size:', req.file.size);
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
@@ -160,7 +179,7 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'File is empty or invalid' });
     }
 
-    console.log('Processing', data.length, 'rows');
+    console.log(`📊 Processing ${data.length} rows`);
 
     let processedCount = 0;
     let batch = db.batch();
@@ -216,7 +235,7 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Upload error:', error);
+    console.error('❌ Upload error:', error);
     return res.status(500).json({ error: 'Failed to process file: ' + error.message });
   }
 });
@@ -259,7 +278,7 @@ app.get('/api/search', async (req, res) => {
     return res.json(results);
     
   } catch (error) {
-    console.error('Search error:', error);
+    console.error('❌ Search error:', error);
     return res.status(500).json({ error: 'Search failed' });
   }
 });
@@ -270,7 +289,7 @@ app.get('/api/count', verifyJWT, async (req, res) => {
     const snapshot = await db.collection('results').get();
     return res.json({ count: snapshot.size });
   } catch (error) {
-    console.error('Count error:', error);
+    console.error('❌ Count error:', error);
     return res.status(500).json({ error: 'Failed to get count' });
   }
 });
@@ -282,5 +301,5 @@ app.get('*', (req, res) => {
 
 // ==================== START ====================
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
