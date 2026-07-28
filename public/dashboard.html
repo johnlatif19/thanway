@@ -360,6 +360,7 @@
         <li>📌 يجب أن يحتوي الملف على عمود <strong>رقم الجلوس</strong> أو <strong>seat_number</strong></li>
         <li>📌 سيتم تحديث بيانات الطلاب تلقائياً في حالة وجود رقم جلوس مكرر</li>
         <li>📌 جميع المواد تُقرأ تلقائياً من الأعمدة</li>
+        <li>⚠️ الحد الأقصى لحجم الملف هو <strong>4.5 ميجابايت</strong> (بسبب قيود Vercel)</li>
       </ul>
     </div>
   </div>
@@ -489,9 +490,9 @@
           return;
         }
         
-        // Check file size (max 50MB)
-        if (file.size > 50 * 1024 * 1024) {
-          showStatus('⚠️ حجم الملف كبير جداً. الحد الأقصى 50MB', 'error');
+        // Check file size (max 4.5MB for Vercel)
+        if (file.size > 4.5 * 1024 * 1024) {
+          showStatus('⚠️ حجم الملف كبير جداً. الحد الأقصى هو 4.5 ميجابايت (بسبب قيود Vercel)', 'error');
           fileInput.value = '';
           return;
         }
@@ -538,7 +539,7 @@
       }
     });
 
-    // Upload button click
+    // Upload button click - مع دعم الملفات الكبيرة
     uploadBtn.addEventListener('click', async () => {
       if (!selectedFile) return;
 
@@ -552,7 +553,6 @@
       hideStatus();
 
       try {
-        // Simulate progress
         let progress = 0;
         const progressInterval = setInterval(() => {
           if (progress < 90) {
@@ -566,7 +566,6 @@
         const token = localStorage.getItem('token');
         console.log('📤 Uploading file:', selectedFile.name);
         console.log('📤 File size:', selectedFile.size);
-        console.log('📤 Token:', token ? token.substring(0, 20) + '...' : 'No token');
 
         const response = await fetch('/api/upload', {
           method: 'POST',
@@ -580,7 +579,6 @@
 
         console.log('📥 Response status:', response.status);
         
-        // Get response as text first
         const responseText = await response.text();
         console.log('📥 Response text:', responseText);
         
@@ -601,6 +599,11 @@
           fileInput.value = '';
           fileName.textContent = 'لم يتم اختيار ملف';
           uploadBtn.disabled = true;
+        } else if (response.status === 413 || data.error === 'FILE_TOO_LARGE') {
+          // Handle file too large error
+          progressBar.style.width = '100%';
+          progressText.textContent = '❌ الملف كبير جداً';
+          showStatus(`⚠️ الملف كبير جداً (${data.currentSize || 'أكثر من 4.5MB'}). الحد الأقصى هو 4.5 ميجابايت. الرجاء استخدام ملف أصغر أو تقسيم البيانات.`, 'error');
         } else {
           progressBar.style.width = '100%';
           progressText.textContent = '❌ فشل الرفع';
