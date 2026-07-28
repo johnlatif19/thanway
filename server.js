@@ -6,17 +6,18 @@ const XLSX = require('xlsx');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const path = require('path');
+const { Readable } = require('stream');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ==================== MIDDLEWARE ====================
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
-// CORS - Allow all
+// CORS
 app.use(cors({
   origin: '*',
   credentials: true,
@@ -43,16 +44,13 @@ try {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { 
-    fileSize: 100 * 1024 * 1024 // 100MB limit
+    fileSize: 5 * 1024 * 1024 // 5MB limit for Vercel
   }
 });
 
 // ==================== JWT MIDDLEWARE ====================
 const verifyJWT = (req, res, next) => {
-  // Try multiple sources for token
-  const token = req.cookies?.token || 
-                req.headers.authorization?.split(' ')[1] ||
-                req.query.token;
+  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
   
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized - No token' });
@@ -143,9 +141,7 @@ app.post('/api/login', async (req, res) => {
 // Check authentication
 app.get('/api/check-auth', (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1] || 
-                  req.cookies?.token || 
-                  req.query.token;
+    const token = req.headers.authorization?.split(' ')[1] || req.cookies?.token;
     
     if (!token) {
       return res.json({ authenticated: false });
@@ -164,10 +160,9 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// Upload Excel file - IMPROVED
+// Upload Excel file - مع دعم الملفات الكبيرة
 app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
   console.log('📤 Upload attempt');
-  console.log('📄 File:', req.file);
   
   try {
     if (!req.file) {
@@ -177,6 +172,16 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
 
     console.log('📊 File size:', req.file.size, 'bytes');
     console.log('📊 File name:', req.file.originalname);
+
+    // If file is too large for Vercel, return error with instructions
+    if (req.file.size > 4.5 * 1024 * 1024) {
+      return res.status(413).json({ 
+        error: 'FILE_TOO_LARGE',
+        message: 'الملف كبير جداً. الحد الأقصى هو 4.5 ميجابايت على Vercel. الرجاء استخدام ملف أصغر أو تقسيم البيانات.',
+        maxSize: '4.5 MB',
+        currentSize: (req.file.size / 1024 / 1024).toFixed(2) + ' MB'
+      });
+    }
 
     // Try to read the file
     let workbook;
@@ -201,7 +206,6 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
 
     console.log(`📊 Processing ${data.length} rows`);
 
-    // Check if db is initialized
     if (!db) {
       console.error('❌ Firebase not initialized');
       return res.status(500).json({ error: 'Database not initialized' });
@@ -212,7 +216,6 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
     let batchCount = 0;
 
     for (const row of data) {
-      // Try different field names for seat number
       const seatNumber = String(
         row['seat_number'] || 
         row['رقم الجلوس'] || 
@@ -221,10 +224,7 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
         ''
       );
       
-      if (!seatNumber) {
-        console.log('⚠️ Skipping row without seat number:', row);
-        continue;
-      }
+      if (!seatNumber) continue;
 
       const docRef = db.collection('results').doc(seatNumber);
       
@@ -276,7 +276,6 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
 
   } catch (error) {
     console.error('❌ Upload error:', error);
-    console.error('❌ Error stack:', error.stack);
     return res.status(500).json({ 
       error: 'Failed to process file: ' + error.message 
     });
