@@ -327,7 +327,7 @@
     </div>
 
     <div class="card">
-      <div class="card-title">📤 رفع ملف Excel</div>
+      <div class="card-title">📤 رفع ملف</div>
       
       <div class="upload-area" id="uploadArea">
         <span class="upload-icon">📁</span>
@@ -336,7 +336,7 @@
         </div>
         <div class="file-input-wrapper">
           <label class="file-label" id="fileLabel">📎 اختيار ملف</label>
-          <input type="file" id="fileInput" accept=".xlsx,.xls">
+          <input type="file" id="fileInput" accept="*/*">
         </div>
         <div class="file-name" id="fileName">لم يتم اختيار ملف</div>
       </div>
@@ -356,7 +356,7 @@
     <div class="card">
       <div class="card-title">📋 تعليمات</div>
       <ul style="color: rgba(255,255,255,0.8); line-height: 2; padding-right: 20px;">
-        <li>📌 رفع ملف Excel بامتداد <strong>.xlsx</strong> أو <strong>.xls</strong></li>
+        <li>📌 رفع ملف <strong>Excel</strong> (.xlsx أو .xls) أو <strong>CSV</strong></li>
         <li>📌 يجب أن يحتوي الملف على عمود <strong>رقم الجلوس</strong> أو <strong>seat_number</strong></li>
         <li>📌 سيتم تحديث بيانات الطلاب تلقائياً في حالة وجود رقم جلوس مكرر</li>
         <li>📌 جميع المواد تُقرأ تلقائياً من الأعمدة</li>
@@ -368,7 +368,6 @@
   <script>
     // ============ CHECK AUTHENTICATION ============
     async function checkAuth() {
-      // Get token from URL or localStorage
       const urlParams = new URLSearchParams(window.location.search);
       let token = urlParams.get('token');
       
@@ -377,7 +376,6 @@
       }
       
       if (!token) {
-        // No token, redirect to login
         console.log('❌ No token found, redirecting to login');
         window.location.href = '/login';
         return;
@@ -393,19 +391,15 @@
         const data = await response.json();
         
         if (data.authenticated) {
-          // Valid token, show dashboard
           console.log('✅ Authenticated successfully');
           document.body.classList.add('show');
           
-          // Remove token from URL if present
           if (urlParams.has('token')) {
             window.history.replaceState({}, document.title, '/dashboard');
           }
           
-          // Load student count
           loadCount();
         } else {
-          // Invalid token, redirect to login
           console.log('❌ Invalid token, redirecting to login');
           localStorage.removeItem('token');
           window.location.href = '/login';
@@ -467,7 +461,7 @@
       statusMessage.style.display = 'none';
     }
 
-    // ============ FILE UPLOAD - IMPROVED ============
+    // ============ FILE UPLOAD ============
     const fileInput = document.getElementById('fileInput');
     const fileName = document.getElementById('fileName');
     const uploadBtn = document.getElementById('uploadBtn');
@@ -478,34 +472,35 @@
 
     let selectedFile = null;
 
-    // File input change handler
+    // File input change handler - يقبل أي ملف
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (file) {
-        // Check file type
-        const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
-        if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx|xls)$/)) {
-          showStatus('⚠️ الرجاء اختيار ملف Excel فقط (.xlsx أو .xls)', 'error');
-          fileInput.value = '';
-          return;
-        }
-        
         // Check file size (max 4.5MB for Vercel)
         if (file.size > 4.5 * 1024 * 1024) {
-          showStatus('⚠️ حجم الملف كبير جداً. الحد الأقصى هو 4.5 ميجابايت (بسبب قيود Vercel)', 'error');
+          showStatus(`⚠️ حجم الملف كبير جداً (${(file.size / 1024 / 1024).toFixed(2)} MB). الحد الأقصى هو 4.5 ميجابايت`, 'error');
           fileInput.value = '';
           return;
         }
         
         selectedFile = file;
-        fileName.textContent = `📎 ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+        const fileType = file.name.split('.').pop().toUpperCase();
+        fileName.textContent = `📎 ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) - نوع: ${fileType}`;
         uploadBtn.disabled = false;
         hideStatus();
+        showStatus(`✅ تم اختيار الملف: ${file.name}`, 'success');
       } else {
         selectedFile = null;
         fileName.textContent = 'لم يتم اختيار ملف';
         uploadBtn.disabled = true;
       }
+      
+      // Auto-hide success message after 3 seconds
+      setTimeout(() => {
+        if (document.getElementById('statusMessage').classList.contains('status-success')) {
+          hideStatus();
+        }
+      }, 3000);
     });
 
     // Upload area click
@@ -529,17 +524,13 @@
       const files = e.dataTransfer.files;
       if (files.length > 0) {
         const file = files[0];
-        if (file.name.match(/\.(xlsx|xls)$/)) {
-          fileInput.files = files;
-          const event = new Event('change');
-          fileInput.dispatchEvent(event);
-        } else {
-          showStatus('⚠️ الرجاء اختيار ملف Excel فقط (.xlsx أو .xls)', 'error');
-        }
+        fileInput.files = files;
+        const event = new Event('change');
+        fileInput.dispatchEvent(event);
       }
     });
 
-    // Upload button click - مع دعم الملفات الكبيرة
+    // Upload button click
     uploadBtn.addEventListener('click', async () => {
       if (!selectedFile) return;
 
@@ -566,6 +557,7 @@
         const token = localStorage.getItem('token');
         console.log('📤 Uploading file:', selectedFile.name);
         console.log('📤 File size:', selectedFile.size);
+        console.log('📤 File type:', selectedFile.type);
 
         const response = await fetch('/api/upload', {
           method: 'POST',
@@ -600,10 +592,9 @@
           fileName.textContent = 'لم يتم اختيار ملف';
           uploadBtn.disabled = true;
         } else if (response.status === 413 || data.error === 'FILE_TOO_LARGE') {
-          // Handle file too large error
           progressBar.style.width = '100%';
           progressText.textContent = '❌ الملف كبير جداً';
-          showStatus(`⚠️ الملف كبير جداً (${data.currentSize || 'أكثر من 4.5MB'}). الحد الأقصى هو 4.5 ميجابايت. الرجاء استخدام ملف أصغر أو تقسيم البيانات.`, 'error');
+          showStatus(`⚠️ الملف كبير جداً (${data.currentSize || 'أكثر من 4.5MB'}). الحد الأقصى هو 4.5 ميجابايت.`, 'error');
         } else {
           progressBar.style.width = '100%';
           progressText.textContent = '❌ فشل الرفع';
@@ -624,7 +615,6 @@
     });
 
     // ============ START ============
-    // Check authentication on page load
     checkAuth();
   </script>
 </body>
