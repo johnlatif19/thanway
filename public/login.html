@@ -17,6 +17,7 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            padding: 20px;
         }
         .login-container {
             background: white;
@@ -29,8 +30,14 @@
         h2 {
             text-align: center;
             color: #333;
-            margin-bottom: 30px;
+            margin-bottom: 10px;
             font-size: 28px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
         }
         .form-group {
             margin-bottom: 20px;
@@ -73,126 +80,205 @@
         button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+            transform: none;
         }
-        .error {
-            color: #dc3545;
+        .message {
             text-align: center;
             margin-top: 15px;
             padding: 10px;
-            background: #f8d7da;
             border-radius: 8px;
             display: none;
         }
-        .error.show {
+        .message.error {
             display: block;
+            color: #721c24;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
         }
-        .loading {
-            display: none;
+        .message.success {
+            display: block;
+            color: #155724;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+        }
+        .message.loading {
+            display: block;
+            color: #0c5460;
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+        }
+        .test-status {
             text-align: center;
-            margin-top: 15px;
+            margin-top: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #666;
         }
-        .loading.show {
-            display: block;
+        .test-status .online {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .test-status .offline {
+            color: #dc3545;
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
         <h2>🔐 تسجيل الدخول</h2>
+        <p class="subtitle">نظام إدارة نتائج الطلاب</p>
+        
         <form id="loginForm">
             <div class="form-group">
-                <label>اسم المستخدم</label>
+                <label>👤 اسم المستخدم</label>
                 <input type="text" id="username" placeholder="أدخل اسم المستخدم" required>
             </div>
             <div class="form-group">
-                <label>كلمة المرور</label>
+                <label>🔑 كلمة المرور</label>
                 <input type="password" id="password" placeholder="أدخل كلمة المرور" required>
             </div>
             <button type="submit" id="loginBtn">تسجيل الدخول</button>
         </form>
-        <div class="error" id="errorMessage">❌ خطأ في اسم المستخدم أو كلمة المرور</div>
-        <div class="loading" id="loadingMessage">⏳ جاري تسجيل الدخول...</div>
+        
+        <div id="message" class="message"></div>
+        
+        <div class="test-status">
+            <span>حالة الخادم: </span>
+            <span id="serverStatus" class="offline">جاري التحقق...</span>
+        </div>
     </div>
 
     <script>
-        // Test server connection on page load
+        // ============ TEST SERVER CONNECTION ============
         async function testServer() {
+            const statusEl = document.getElementById('serverStatus');
             try {
                 const response = await fetch('/api/test');
                 if (response.ok) {
-                    console.log('✅ Server is running');
+                    statusEl.textContent = '🟢 متصل';
+                    statusEl.className = 'online';
                     return true;
                 }
             } catch (error) {
-                console.error('❌ Server connection failed:', error);
+                console.error('Server test error:', error);
             }
+            statusEl.textContent = '🔴 غير متصل';
+            statusEl.className = 'offline';
             return false;
         }
 
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        // ============ SHOW MESSAGE ============
+        function showMessage(text, type) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = 'message ' + type;
+        }
+
+        function hideMessage() {
+            const msg = document.getElementById('message');
+            msg.className = 'message';
+            msg.textContent = '';
+        }
+
+        // ============ LOGIN FUNCTION ============
+        async function handleLogin(e) {
             e.preventDefault();
             
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value.trim();
-            const errorDiv = document.getElementById('errorMessage');
-            const loadingDiv = document.getElementById('loadingMessage');
             const loginBtn = document.getElementById('loginBtn');
             
-            // Hide previous error
-            errorDiv.classList.remove('show');
+            hideMessage();
             
             if (!username || !password) {
-                errorDiv.textContent = '⚠️ الرجاء إدخال اسم المستخدم وكلمة المرور';
-                errorDiv.classList.add('show');
+                showMessage('⚠️ الرجاء إدخال اسم المستخدم وكلمة المرور', 'error');
                 return;
             }
             
             // Show loading
-            loadingDiv.classList.add('show');
             loginBtn.disabled = true;
-            loginBtn.textContent = 'جاري التحميل...';
+            loginBtn.textContent = '⏳ جاري التحميل...';
+            showMessage('⏳ جاري تسجيل الدخول...', 'loading');
             
             try {
-                console.log('Sending login request...');
+                console.log('📤 Sending login request...');
+                console.log('Username:', username);
+                
                 const response = await fetch('/api/login', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Accept': 'application/json'
                     },
-                    body: JSON.stringify({ username, password })
+                    body: JSON.stringify({ 
+                        username: username, 
+                        password: password 
+                    })
                 });
                 
-                console.log('Response status:', response.status);
-                const data = await response.json();
-                console.log('Response data:', data);
+                console.log('📥 Response status:', response.status);
+                
+                // Get response text first
+                const responseText = await response.text();
+                console.log('📥 Response text:', responseText);
+                
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (parseError) {
+                    console.error('❌ Failed to parse JSON:', parseError);
+                    showMessage('❌ خطأ في استجابة الخادم', 'error');
+                    return;
+                }
+                
+                console.log('📥 Parsed data:', data);
                 
                 if (response.ok && data.success) {
-                    // Store token
+                    // Save token
                     if (data.token) {
                         localStorage.setItem('token', data.token);
-                        localStorage.setItem('username', data.username);
-                        console.log('✅ Login successful, token stored');
+                        localStorage.setItem('username', data.username || username);
+                        console.log('✅ Token saved successfully');
                     }
-                    // Redirect to dashboard
-                    window.location.href = '/dashboard';
+                    
+                    showMessage('✅ تم تسجيل الدخول بنجاح! جاري التحويل...', 'success');
+                    
+                    // Redirect with token in URL for dashboard to pick up
+                    setTimeout(() => {
+                        const token = data.token || localStorage.getItem('token');
+                        if (token) {
+                            window.location.href = '/dashboard?token=' + encodeURIComponent(token);
+                        } else {
+                            window.location.href = '/dashboard';
+                        }
+                    }, 1000);
+                    
                 } else {
-                    errorDiv.textContent = data.error || '❌ خطأ في اسم المستخدم أو كلمة المرور';
-                    errorDiv.classList.add('show');
+                    showMessage(data.error || '❌ فشل تسجيل الدخول - تأكد من اسم المستخدم وكلمة المرور', 'error');
                 }
+                
             } catch (error) {
-                console.error('Login error:', error);
-                errorDiv.textContent = '❌ حدث خطأ في الاتصال. الرجاء المحاولة مرة أخرى.';
-                errorDiv.classList.add('show');
+                console.error('❌ Login error:', error);
+                showMessage('❌ حدث خطأ في الاتصال: ' + error.message, 'error');
             } finally {
-                loadingDiv.classList.remove('show');
                 loginBtn.disabled = false;
                 loginBtn.textContent = 'تسجيل الدخول';
             }
-        });
+        }
 
-        // Test connection on load
+        // ============ EVENT LISTENERS ============
+        document.getElementById('loginForm').addEventListener('submit', handleLogin);
+
+        // ============ TEST ON LOAD ============
         testServer();
+
+        // ============ CONSOLE HELP ============
+        console.log('🔧 For testing, use:');
+        console.log('  ✅ Test server: testServer()');
+        console.log('  ✅ Test login: fetch("/api/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:"admin",password:"admin123"})}).then(r=>r.json()).then(console.log)');
     </script>
 </body>
 </html>
