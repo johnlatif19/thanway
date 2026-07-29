@@ -1,46 +1,43 @@
 /**
  * import-firebase.js
- * ملف منفصل لرفع الملفات مباشرة إلى Firebase Storage
- * يمكن استخدامه مع Node.js أو مع المتصفح
+ * ملف لرفع الملفات مباشرة إلى Cloudinary ومعالجتها
+ * يمكن استخدامه مع Node.js كأداة سطر أوامر
  */
 
 const admin = require('firebase-admin');
-const { Storage } = require('@google-cloud/storage');
+const { v2: cloudinary } = require('cloudinary');
 const path = require('path');
 const fs = require('fs');
+const XLSX = require('xlsx');
 require('dotenv').config();
 
-// ==================== FIREBASE ADMIN ====================
+// ==================== FIREBASE ADMIN (لـ Firestore فقط) ====================
 let db;
-let bucket;
-let storage;
 
 try {
   const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
   
-  // Initialize Firebase Admin
   admin.initializeApp({
-    credential: admin.credential.cert(firebaseConfig),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com'
+    credential: admin.credential.cert(firebaseConfig)
   });
   
   db = admin.firestore();
   
-  // Initialize Google Cloud Storage
-  storage = new Storage({
-    projectId: firebaseConfig.project_id,
-    credentials: firebaseConfig
-  });
-  
-  bucket = storage.bucket(process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com');
-  
-  console.log('✅ Firebase initialized');
-  console.log('✅ Firebase Storage initialized');
-  console.log('✅ Firestore initialized');
+  console.log('✅ Firebase Firestore initialized');
 } catch (error) {
   console.error('❌ Firebase error:', error);
   process.exit(1);
 }
+
+// ==================== CLOUDINARY ====================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true
+});
+
+console.log('✅ Cloudinary initialized');
 
 // ==================== READ CSV ====================
 function parseCSV(buffer) {
@@ -83,59 +80,6 @@ function parseCSV(buffer) {
   return results;
 }
 
-// ==================== UPLOAD FILE TO FIREBASE ====================
-async function uploadFileToFirebase(filePath, customFileName = null) {
-  try {
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File not found: ${filePath}`);
-    }
-
-    const fileBuffer = fs.readFileSync(filePath);
-    const originalName = path.basename(filePath);
-    const timestamp = Date.now();
-    const fileName = customFileName || `uploads/${timestamp}_${originalName}`;
-    
-    console.log(`📤 Uploading: ${originalName}`);
-    console.log(`📊 File size: ${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB`);
-
-    const file = bucket.file(fileName);
-
-    // Upload file to Firebase Storage
-    await file.save(fileBuffer, {
-      metadata: {
-        contentType: getContentType(filePath),
-        metadata: {
-          uploadedBy: 'import-firebase-script',
-          uploadedAt: new Date().toISOString(),
-          originalName: originalName
-        }
-      }
-    });
-
-    // Make file public
-    await file.makePublic();
-    
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
-    
-    console.log(`✅ File uploaded successfully`);
-    console.log(`🔗 Public URL: ${publicUrl}`);
-
-    return {
-      success: true,
-      fileName: fileName,
-      publicUrl: publicUrl,
-      size: fileBuffer.length
-    };
-
-  } catch (error) {
-    console.error(`❌ Upload error:`, error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-}
-
 // ==================== UPLOAD AND PROCESS FILE ====================
 async function uploadAndProcessFile(filePath, collectionName = 'results') {
   try {
@@ -145,8 +89,6 @@ async function uploadAndProcessFile(filePath, collectionName = 'results') {
 
     const fileBuffer = fs.readFileSync(filePath);
     const originalName = path.basename(filePath);
-    const timestamp = Date.now();
-    const fileName = `uploads/${timestamp}_${originalName}`;
     
     console.log(`📤 Processing: ${originalName}`);
     console.log(`📊 File size: ${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB`);
@@ -165,7 +107,6 @@ async function uploadAndProcessFile(filePath, collectionName = 'results') {
       }
     } else if (fileNameLower.endsWith('.xlsx') || fileNameLower.endsWith('.xls')) {
       try {
-        const XLSX = require('xlsx');
         const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
         if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
           throw new Error('File has no sheets');
@@ -186,25 +127,37 @@ async function uploadAndProcessFile(filePath, collectionName = 'results') {
       throw new Error('File is empty or invalid');
     }
 
-    // Upload file to Firebase Storage
-    const file = bucket.file(fileName);
-    await file.save(fileBuffer, {
-      metadata: {
-        contentType: getContentType(filePath),
-        metadata: {
-          uploadedBy: 'import-firebase-script',
-          uploadedAt: new Date().toISOString(),
-          originalName: originalName,
-          recordCount: data.length.toString()
+    // ============ UPLOAD TO CLOUDINARY ============
+    console.log('📤 Uploading to Cloudinary...');
+    
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'student_results',
+          resource_type: 'auto',
+          public_id: `${Date.now()}_${originalName.split('.')[0]}`,
+          use_filename: true,
+          unique_filename: true
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
         }
-      }
+      );
+      
+      const Readable = require('stream').Readable;
+      const stream = new Readable();
+      stream.push(fileBuffer);
+      stream.push(null);
+      stream.pipe(uploadStream);
     });
 
-    await file.makePublic();
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
-    console.log(`✅ File uploaded to Storage`);
+    console.log('✅ File uploaded to Cloudinary');
+    console.log('🔗 Public URL:', uploadResult.secure_url);
 
-    // Save to Firestore
+    // ============ SAVE TO FIRESTORE ============
+    console.log('📤 Saving to Firestore...');
+
     let processedCount = 0;
     let batch = db.batch();
     let batchCount = 0;
@@ -265,8 +218,9 @@ async function uploadAndProcessFile(filePath, collectionName = 'results') {
 
     return {
       success: true,
-      fileName: fileName,
-      publicUrl: publicUrl,
+      fileName: originalName,
+      publicUrl: uploadResult.secure_url,
+      cloudinaryPublicId: uploadResult.public_id,
       recordCount: processedCount,
       fileSize: fileBuffer.length
     };
@@ -280,61 +234,13 @@ async function uploadAndProcessFile(filePath, collectionName = 'results') {
   }
 }
 
-// ==================== GET CONTENT TYPE ====================
-function getContentType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  const types = {
-    '.csv': 'text/csv',
-    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.xls': 'application/vnd.ms-excel',
-    '.txt': 'text/plain',
-    '.json': 'application/json',
-    '.pdf': 'application/pdf'
-  };
-  return types[ext] || 'application/octet-stream';
-}
-
-// ==================== LIST ALL FILES ====================
-async function listFiles(prefix = 'uploads/') {
-  try {
-    const [files] = await bucket.getFiles({ prefix: prefix });
-    
-    const fileList = files.map(file => ({
-      name: file.name,
-      size: file.metadata.size,
-      contentType: file.metadata.contentType,
-      created: file.metadata.timeCreated,
-      publicUrl: `https://storage.googleapis.com/${bucket.name}/${file.name}`
-    }));
-    
-    console.log(`📁 Found ${fileList.length} files`);
-    return fileList;
-  } catch (error) {
-    console.error('❌ Error listing files:', error);
-    return [];
-  }
-}
-
-// ==================== DELETE FILE ====================
-async function deleteFile(fileName) {
-  try {
-    const file = bucket.file(fileName);
-    await file.delete();
-    console.log(`✅ Deleted: ${fileName}`);
-    return { success: true, message: `Deleted: ${fileName}` };
-  } catch (error) {
-    console.error(`❌ Error deleting file:`, error);
-    return { success: false, error: error.message };
-  }
-}
-
 // ==================== COMMAND LINE INTERFACE ====================
 if (require.main === module) {
   const args = process.argv.slice(2);
   const command = args[0];
   const filePath = args[1];
 
-  console.log('🚀 Firebase Import Tool');
+  console.log('🚀 Cloudinary Import Tool');
   console.log('=======================');
 
   switch (command) {
@@ -348,33 +254,9 @@ if (require.main === module) {
         if (result.success) {
           console.log('\n✅ Import completed successfully!');
           console.log(`📊 Records: ${result.recordCount}`);
-          console.log(`🔗 URL: ${result.publicUrl}`);
+          console.log(`🔗 Cloudinary URL: ${result.publicUrl}`);
         } else {
           console.log('\n❌ Import failed:', result.error);
-        }
-      });
-      break;
-
-    case 'list':
-      listFiles().then(files => {
-        console.log('\n📁 Uploaded Files:');
-        files.forEach(f => {
-          console.log(`  - ${f.name} (${(f.size / 1024).toFixed(1)} KB)`);
-        });
-      });
-      break;
-
-    case 'delete':
-      if (!filePath) {
-        console.error('❌ Please provide file name to delete');
-        console.log('Usage: node import-firebase.js delete <file-name>');
-        process.exit(1);
-      }
-      deleteFile(filePath).then(result => {
-        if (result.success) {
-          console.log('✅ File deleted successfully');
-        } else {
-          console.log('❌ Delete failed:', result.error);
         }
       });
       break;
@@ -382,24 +264,15 @@ if (require.main === module) {
     default:
       console.log('📖 Usage:');
       console.log('  node import-firebase.js upload <file-path>    - Upload and process file');
-      console.log('  node import-firebase.js list                  - List all uploaded files');
-      console.log('  node import-firebase.js delete <file-name>    - Delete a file');
       console.log('\nExamples:');
       console.log('  node import-firebase.js upload ./data.csv');
       console.log('  node import-firebase.js upload ./students.xlsx');
-      console.log('  node import-firebase.js list');
-      console.log('  node import-firebase.js delete uploads/123456789_data.csv');
   }
 }
 
 // ==================== EXPORTS ====================
 module.exports = {
-  uploadFileToFirebase,
   uploadAndProcessFile,
-  listFiles,
-  deleteFile,
   parseCSV,
-  db,
-  bucket,
-  storage
-};import-firebase.js
+  db
+};
