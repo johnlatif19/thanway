@@ -287,6 +287,21 @@
       border: 1px solid rgba(255, 165, 0, 0.3);
     }
 
+    .file-url {
+      margin-top: 10px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      word-break: break-all;
+      font-size: 12px;
+      display: none;
+    }
+
+    .file-url a {
+      color: #fff;
+      text-decoration: underline;
+    }
+
     @media (max-width: 768px) {
       .header {
         flex-direction: column;
@@ -327,7 +342,7 @@
     </div>
 
     <div class="card">
-      <div class="card-title">📤 رفع ملف</div>
+      <div class="card-title">📤 رفع ملف (Cloudinary)</div>
       
       <div class="upload-area" id="uploadArea">
         <span class="upload-icon">📁</span>
@@ -336,12 +351,12 @@
         </div>
         <div class="file-input-wrapper">
           <label class="file-label" id="fileLabel">📎 اختيار ملف</label>
-          <input type="file" id="fileInput" accept="*/*">
+          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
         </div>
         <div class="file-name" id="fileName">لم يتم اختيار ملف</div>
       </div>
 
-      <button class="btn-upload" id="uploadBtn" disabled>🚀 رفع الملف</button>
+      <button class="btn-upload" id="uploadBtn" disabled>🚀 رفع الملف إلى Cloudinary</button>
 
       <div class="progress-container" id="progressContainer">
         <div class="progress-bar-bg">
@@ -351,6 +366,7 @@
       </div>
 
       <div class="status-message" id="statusMessage"></div>
+      <div class="file-url" id="fileUrl"></div>
     </div>
 
     <div class="card">
@@ -360,7 +376,7 @@
         <li>📌 يجب أن يحتوي الملف على عمود <strong>رقم الجلوس</strong> أو <strong>seat_number</strong></li>
         <li>📌 سيتم تحديث بيانات الطلاب تلقائياً في حالة وجود رقم جلوس مكرر</li>
         <li>📌 جميع المواد تُقرأ تلقائياً من الأعمدة</li>
-        <li>⚠️ الحد الأقصى لحجم الملف هو <strong>4.5 ميجابايت</strong> (بسبب قيود Vercel)</li>
+        <li>☁️ الملفات تُرفع إلى <strong>Cloudinary</strong> للتخزين الآمن</li>
       </ul>
     </div>
   </div>
@@ -459,9 +475,16 @@
     function hideStatus() {
       const statusMessage = document.getElementById('statusMessage');
       statusMessage.style.display = 'none';
+      document.getElementById('fileUrl').style.display = 'none';
     }
 
-    // ============ FILE UPLOAD ============
+    function showFileUrl(url) {
+      const fileUrlDiv = document.getElementById('fileUrl');
+      fileUrlDiv.innerHTML = `🔗 <a href="${url}" target="_blank">${url}</a>`;
+      fileUrlDiv.style.display = 'block';
+    }
+
+    // ============ FILE UPLOAD TO CLOUDINARY ============
     const fileInput = document.getElementById('fileInput');
     const fileName = document.getElementById('fileName');
     const uploadBtn = document.getElementById('uploadBtn');
@@ -472,13 +495,13 @@
 
     let selectedFile = null;
 
-    // File input change handler - يقبل أي ملف
+    // File input change handler
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (file) {
-        // Check file size (max 4.5MB for Vercel)
-        if (file.size > 4.5 * 1024 * 1024) {
-          showStatus(`⚠️ حجم الملف كبير جداً (${(file.size / 1024 / 1024).toFixed(2)} MB). الحد الأقصى هو 4.5 ميجابايت`, 'error');
+        // Check file type
+        if (!file.name.match(/\.(xlsx|xls|csv)$/)) {
+          showStatus('⚠️ الرجاء اختيار ملف Excel (.xlsx, .xls) أو CSV', 'error');
           fileInput.value = '';
           return;
         }
@@ -488,19 +511,11 @@
         fileName.textContent = `📎 ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) - نوع: ${fileType}`;
         uploadBtn.disabled = false;
         hideStatus();
-        showStatus(`✅ تم اختيار الملف: ${file.name}`, 'success');
       } else {
         selectedFile = null;
         fileName.textContent = 'لم يتم اختيار ملف';
         uploadBtn.disabled = true;
       }
-      
-      // Auto-hide success message after 3 seconds
-      setTimeout(() => {
-        if (document.getElementById('statusMessage').classList.contains('status-success')) {
-          hideStatus();
-        }
-      }, 3000);
     });
 
     // Upload area click
@@ -524,13 +539,17 @@
       const files = e.dataTransfer.files;
       if (files.length > 0) {
         const file = files[0];
-        fileInput.files = files;
-        const event = new Event('change');
-        fileInput.dispatchEvent(event);
+        if (file.name.match(/\.(xlsx|xls|csv)$/)) {
+          fileInput.files = files;
+          const event = new Event('change');
+          fileInput.dispatchEvent(event);
+        } else {
+          showStatus('⚠️ الرجاء اختيار ملف Excel أو CSV', 'error');
+        }
       }
     });
 
-    // Upload button click
+    // ============ UPLOAD TO CLOUDINARY ============
     uploadBtn.addEventListener('click', async () => {
       if (!selectedFile) return;
 
@@ -550,16 +569,15 @@
             progress += Math.random() * 10;
             progress = Math.min(progress, 90);
             progressBar.style.width = progress + '%';
-            progressText.textContent = `جاري الرفع... ${Math.round(progress)}%`;
+            progressText.textContent = `جاري الرفع إلى Cloudinary... ${Math.round(progress)}%`;
           }
         }, 300);
 
         const token = localStorage.getItem('token');
-        console.log('📤 Uploading file:', selectedFile.name);
+        console.log('📤 Uploading to Cloudinary:', selectedFile.name);
         console.log('📤 File size:', selectedFile.size);
-        console.log('📤 File type:', selectedFile.type);
 
-        const response = await fetch('/api/upload', {
+        const response = await fetch('/api/upload-to-cloudinary', {
           method: 'POST',
           headers: {
             'Authorization': 'Bearer ' + token
@@ -585,16 +603,19 @@
         if (response.ok && data.success) {
           progressBar.style.width = '100%';
           progressText.textContent = '✅ تم الرفع بنجاح!';
-          showStatus(`✅ تم رفع البيانات بنجاح! (${data.count || 0} طالب)`, 'success');
+          showStatus(`✅ تم رفع ${data.count || 0} طالب بنجاح!`, 'success');
+          
+          // Show file URL from Cloudinary
+          if (data.fileUrl) {
+            console.log('🔗 File URL:', data.fileUrl);
+            showFileUrl(data.fileUrl);
+          }
+          
           loadCount();
           selectedFile = null;
           fileInput.value = '';
           fileName.textContent = 'لم يتم اختيار ملف';
           uploadBtn.disabled = true;
-        } else if (response.status === 413 || data.error === 'FILE_TOO_LARGE') {
-          progressBar.style.width = '100%';
-          progressText.textContent = '❌ الملف كبير جداً';
-          showStatus(`⚠️ الملف كبير جداً (${data.currentSize || 'أكثر من 4.5MB'}). الحد الأقصى هو 4.5 ميجابايت.`, 'error');
         } else {
           progressBar.style.width = '100%';
           progressText.textContent = '❌ فشل الرفع';
