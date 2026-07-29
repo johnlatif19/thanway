@@ -6,8 +6,7 @@ const XLSX = require('xlsx');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const path = require('path');
-const { Storage } = require('@google-cloud/storage');
-const { Readable } = require('stream');
+const { v2: cloudinary } = require('cloudinary');
 require('dotenv').config();
 
 const app = express();
@@ -27,41 +26,33 @@ app.use(cors({
 
 app.use(express.static('public'));
 
-// ==================== FIREBASE ADMIN ====================
+// ==================== FIREBASE ADMIN (للـ Firestore فقط) ====================
 let db;
-let bucket;
-let storage;
-
 try {
   const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
-  
-  // Initialize Firebase Admin
   admin.initializeApp({
-    credential: admin.credential.cert(firebaseConfig),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com'
+    credential: admin.credential.cert(firebaseConfig)
   });
-  
   db = admin.firestore();
-  
-  // Initialize Google Cloud Storage
-  storage = new Storage({
-    projectId: firebaseConfig.project_id,
-    credentials: firebaseConfig
-  });
-  
-  bucket = storage.bucket(process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com');
-  
-  console.log('✅ Firebase initialized');
-  console.log('✅ Firebase Storage initialized');
+  console.log('✅ Firebase Firestore initialized');
 } catch (error) {
   console.error('❌ Firebase error:', error);
 }
+
+// ==================== CLOUDINARY ====================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true
+});
+console.log('✅ Cloudinary initialized');
 
 // ==================== MULTER ====================
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { 
-    fileSize: 100 * 1024 * 1024 // 100MB limit for large files
+    fileSize: 100 * 1024 * 1024 // 100MB
   }
 });
 
@@ -218,9 +209,9 @@ function parseCSV(buffer) {
   return results;
 }
 
-// ==================== UPLOAD TO FIREBASE STORAGE ====================
-app.post('/api/upload-to-firebase', verifyJWT, upload.single('file'), async (req, res) => {
-  console.log('📤 Upload to Firebase Storage');
+// ==================== UPLOAD TO CLOUDINARY ====================
+app.post('/api/upload-to-cloudinary', verifyJWT, upload.single('file'), async (req, res) => {
+  console.log('📤 Upload to Cloudinary');
   
   try {
     if (!req.file) {
@@ -232,37 +223,32 @@ app.post('/api/upload-to-firebase', verifyJWT, upload.single('file'), async (req
     console.log('📊 File name:', req.file.originalname);
     console.log('📊 File type:', req.file.mimetype);
 
-    if (!bucket) {
-      console.error('❌ Firebase Storage not initialized');
-      return res.status(500).json({ error: 'Storage not initialized' });
-    }
-
-    // Create unique file name
-    const timestamp = Date.now();
-    const fileName = `uploads/${timestamp}_${req.file.originalname}`;
-    const file = bucket.file(fileName);
-    
-    console.log('📤 Uploading to:', fileName);
-
-    // Upload file to Firebase Storage
-    await file.save(req.file.buffer, {
-      metadata: {
-        contentType: req.file.mimetype,
-        metadata: {
-          uploadedBy: req.user?.username || 'admin',
-          uploadedAt: new Date().toISOString()
+    // Upload to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'student_results',
+          resource_type: 'auto',
+          public_id: `${Date.now()}_${req.file.originalname.split('.')[0]}`,
+          use_filename: true,
+          unique_filename: true
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
         }
-      }
+      );
+      
+      // Convert buffer to stream
+      const Readable = require('stream').Readable;
+      const stream = new Readable();
+      stream.push(req.file.buffer);
+      stream.push(null);
+      stream.pipe(uploadStream);
     });
 
-    // Make file public (optional)
-    await file.makePublic();
-    
-    // Get public URL
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
-    
-    console.log('✅ File uploaded successfully');
-    console.log('🔗 Public URL:', publicUrl);
+    console.log('✅ File uploaded to Cloudinary');
+    console.log('🔗 Public URL:', result.secure_url);
 
     // Now process the file data
     let data = [];
@@ -366,8 +352,8 @@ app.post('/api/upload-to-firebase', verifyJWT, upload.single('file'), async (req
       success: true, 
       message: `Successfully processed ${processedCount} students`,
       count: processedCount,
-      fileUrl: publicUrl,
-      fileName: fileName
+      fileUrl: result.secure_url,
+      fileName: result.public_id
     });
 
   } catch (error) {
@@ -375,51 +361,6 @@ app.post('/api/upload-to-firebase', verifyJWT, upload.single('file'), async (req
     return res.status(500).json({ 
       error: 'Failed to process file: ' + error.message 
     });
-  }
-});
-
-// ==================== GET ALL UPLOADED FILES ====================
-app.get('/api/files', verifyJWT, async (req, res) => {
-  try {
-    if (!bucket) {
-      return res.status(500).json({ error: 'Storage not initialized' });
-    }
-
-    const [files] = await bucket.getFiles({
-      prefix: 'uploads/'
-    });
-
-    const fileList = files.map(file => ({
-      name: file.name,
-      size: file.metadata.size,
-      contentType: file.metadata.contentType,
-      created: file.metadata.timeCreated,
-      publicUrl: `https://storage.googleapis.com/${bucket.name}/${file.name}`
-    }));
-
-    return res.json({ files: fileList });
-  } catch (error) {
-    console.error('❌ Error getting files:', error);
-    return res.status(500).json({ error: 'Failed to get files' });
-  }
-});
-
-// ==================== DELETE FILE ====================
-app.delete('/api/files/:fileName', verifyJWT, async (req, res) => {
-  try {
-    if (!bucket) {
-      return res.status(500).json({ error: 'Storage not initialized' });
-    }
-
-    const fileName = req.params.fileName;
-    const file = bucket.file(fileName);
-    
-    await file.delete();
-    
-    return res.json({ success: true, message: 'File deleted successfully' });
-  } catch (error) {
-    console.error('❌ Error deleting file:', error);
-    return res.status(500).json({ error: 'Failed to delete file' });
   }
 });
 
