@@ -6,14 +6,16 @@ const XLSX = require('xlsx');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const path = require('path');
+const { Storage } = require('@google-cloud/storage');
+const { Readable } = require('stream');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ==================== MIDDLEWARE ====================
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
 app.use(cors({
@@ -25,15 +27,32 @@ app.use(cors({
 
 app.use(express.static('public'));
 
-// ==================== FIREBASE ====================
+// ==================== FIREBASE ADMIN ====================
 let db;
+let bucket;
+let storage;
+
 try {
   const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
+  
+  // Initialize Firebase Admin
   admin.initializeApp({
-    credential: admin.credential.cert(firebaseConfig)
+    credential: admin.credential.cert(firebaseConfig),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com'
   });
+  
   db = admin.firestore();
+  
+  // Initialize Google Cloud Storage
+  storage = new Storage({
+    projectId: firebaseConfig.project_id,
+    credentials: firebaseConfig
+  });
+  
+  bucket = storage.bucket(process.env.FIREBASE_STORAGE_BUCKET || 'your-project-id.appspot.com');
+  
   console.log('✅ Firebase initialized');
+  console.log('✅ Firebase Storage initialized');
 } catch (error) {
   console.error('❌ Firebase error:', error);
 }
@@ -42,13 +61,13 @@ try {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { 
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 100 * 1024 * 1024 // 100MB limit for large files
   }
 });
 
 // ==================== JWT MIDDLEWARE ====================
 const verifyJWT = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+  const token = req.headers.authorization?.split(' ')[1] || req.query.token || req.cookies?.token;
   
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized - No token' });
@@ -158,26 +177,20 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// ==================== READ CSV FILE (بدون مكتبة خارجية) ====================
+// ==================== READ CSV ====================
 function parseCSV(buffer) {
   const results = [];
   const csvContent = buffer.toString('utf-8');
   
-  // Split into lines and remove empty lines
   const lines = csvContent.split('\n').filter(line => line.trim());
-  if (lines.length === 0) {
-    return results;
-  }
+  if (lines.length === 0) return results;
   
-  // Get headers from first line
   const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
   
-  // Parse each row
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
     
-    // Handle quoted values
     const values = [];
     let currentValue = '';
     let insideQuotes = false;
@@ -205,9 +218,9 @@ function parseCSV(buffer) {
   return results;
 }
 
-// ==================== UPLOAD ENDPOINT ====================
-app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
-  console.log('📤 Upload attempt');
+// ==================== UPLOAD TO FIREBASE STORAGE ====================
+app.post('/api/upload-to-firebase', verifyJWT, upload.single('file'), async (req, res) => {
+  console.log('📤 Upload to Firebase Storage');
   
   try {
     if (!req.file) {
@@ -219,21 +232,45 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
     console.log('📊 File name:', req.file.originalname);
     console.log('📊 File type:', req.file.mimetype);
 
-    // Check file size
-    if (req.file.size > 4.5 * 1024 * 1024) {
-      return res.status(413).json({ 
-        error: 'FILE_TOO_LARGE',
-        message: 'الملف كبير جداً. الحد الأقصى هو 4.5 ميجابايت',
-        currentSize: (req.file.size / 1024 / 1024).toFixed(2) + ' MB'
-      });
+    if (!bucket) {
+      console.error('❌ Firebase Storage not initialized');
+      return res.status(500).json({ error: 'Storage not initialized' });
     }
 
+    // Create unique file name
+    const timestamp = Date.now();
+    const fileName = `uploads/${timestamp}_${req.file.originalname}`;
+    const file = bucket.file(fileName);
+    
+    console.log('📤 Uploading to:', fileName);
+
+    // Upload file to Firebase Storage
+    await file.save(req.file.buffer, {
+      metadata: {
+        contentType: req.file.mimetype,
+        metadata: {
+          uploadedBy: req.user?.username || 'admin',
+          uploadedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    // Make file public (optional)
+    await file.makePublic();
+    
+    // Get public URL
+    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+    
+    console.log('✅ File uploaded successfully');
+    console.log('🔗 Public URL:', publicUrl);
+
+    // Now process the file data
     let data = [];
-    const fileName = req.file.originalname.toLowerCase();
+    const fileNameLower = req.file.originalname.toLowerCase();
     const fileBuffer = req.file.buffer;
 
-    // Try to parse as CSV first
-    if (fileName.endsWith('.csv') || req.file.mimetype === 'text/csv' || req.file.mimetype === 'application/csv') {
+    // Parse file based on type
+    if (fileNameLower.endsWith('.csv') || req.file.mimetype === 'text/csv' || req.file.mimetype === 'application/csv') {
       try {
         data = parseCSV(fileBuffer);
         console.log(`📊 Parsed ${data.length} rows from CSV`);
@@ -242,7 +279,6 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
         return res.status(400).json({ error: 'Invalid CSV file format' });
       }
     } else {
-      // Try to parse as Excel
       try {
         const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
         if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
@@ -254,7 +290,7 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
         console.log(`📊 Parsed ${data.length} rows from Excel`);
       } catch (error) {
         console.error('❌ Error reading file:', error);
-        return res.status(400).json({ error: 'Invalid file format. Please upload Excel (.xlsx, .xls) or CSV file.' });
+        return res.status(400).json({ error: 'Invalid file format' });
       }
     }
 
@@ -263,16 +299,16 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
     }
 
     if (!db) {
-      console.error('❌ Firebase not initialized');
+      console.error('❌ Firestore not initialized');
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
+    // Process and save to Firestore
     let processedCount = 0;
     let batch = db.batch();
     let batchCount = 0;
 
     for (const row of data) {
-      // Try different field names for seat number
       const seatNumber = String(
         row['seat_number'] || 
         row['رقم الجلوس'] || 
@@ -282,10 +318,7 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
         ''
       );
       
-      if (!seatNumber) {
-        console.log('⚠️ Skipping row without seat number:', row);
-        continue;
-      }
+      if (!seatNumber) continue;
 
       const docRef = db.collection('results').doc(seatNumber);
       
@@ -332,7 +365,9 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
     return res.json({ 
       success: true, 
       message: `Successfully processed ${processedCount} students`,
-      count: processedCount
+      count: processedCount,
+      fileUrl: publicUrl,
+      fileName: fileName
     });
 
   } catch (error) {
@@ -343,7 +378,52 @@ app.post('/api/upload', verifyJWT, upload.single('file'), async (req, res) => {
   }
 });
 
-// Search endpoint
+// ==================== GET ALL UPLOADED FILES ====================
+app.get('/api/files', verifyJWT, async (req, res) => {
+  try {
+    if (!bucket) {
+      return res.status(500).json({ error: 'Storage not initialized' });
+    }
+
+    const [files] = await bucket.getFiles({
+      prefix: 'uploads/'
+    });
+
+    const fileList = files.map(file => ({
+      name: file.name,
+      size: file.metadata.size,
+      contentType: file.metadata.contentType,
+      created: file.metadata.timeCreated,
+      publicUrl: `https://storage.googleapis.com/${bucket.name}/${file.name}`
+    }));
+
+    return res.json({ files: fileList });
+  } catch (error) {
+    console.error('❌ Error getting files:', error);
+    return res.status(500).json({ error: 'Failed to get files' });
+  }
+});
+
+// ==================== DELETE FILE ====================
+app.delete('/api/files/:fileName', verifyJWT, async (req, res) => {
+  try {
+    if (!bucket) {
+      return res.status(500).json({ error: 'Storage not initialized' });
+    }
+
+    const fileName = req.params.fileName;
+    const file = bucket.file(fileName);
+    
+    await file.delete();
+    
+    return res.json({ success: true, message: 'File deleted successfully' });
+  } catch (error) {
+    console.error('❌ Error deleting file:', error);
+    return res.status(500).json({ error: 'Failed to delete file' });
+  }
+});
+
+// ==================== SEARCH ====================
 app.get('/api/search', async (req, res) => {
   try {
     const q = req.query.q || '';
@@ -386,7 +466,7 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// Get total count
+// ==================== COUNT ====================
 app.get('/api/count', verifyJWT, async (req, res) => {
   try {
     const snapshot = await db.collection('results').get();
